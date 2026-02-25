@@ -2,7 +2,6 @@
 """
 WiFi-based location tracker for Raspberry Pi 5
 Uses nearby WiFi networks to triangulate position via Mozilla Location Service
-Much more accurate than IP-based geolocation (~50m vs ~25km)
 """
 
 import subprocess
@@ -43,6 +42,8 @@ class WiFiLocationTracker:
     
     def scan_wifi_networks(self):
         try:
+            # Wait a moment before scanning to ensure adapter is ready
+            time.sleep(1)
             result = subprocess.run(
                 ['sudo', 'iwlist', self.wifi_interface, 'scan'],
                 capture_output=True, text=True, timeout=30
@@ -108,7 +109,11 @@ class WiFiLocationTracker:
                 location.update(self._reverse_geocode(location['latitude'], location['longitude']))
                 logger.info(f"WiFi location: {location.get('city', 'Unknown')}, accuracy: {location['accuracy']}m")
                 return location
+            elif response.status_code == 404:
+                logger.warning("WiFi networks not in MLS database, using IP fallback")
+                return self._fallback_ip_location()
             else:
+                logger.warning(f"MLS returned {response.status_code}, using IP fallback")
                 return self._fallback_ip_location()
         except Exception as e:
             logger.error(f"MLS request failed: {e}")
