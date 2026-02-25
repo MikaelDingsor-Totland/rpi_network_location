@@ -1,7 +1,10 @@
 # Configuration for the location tracker
 
+import os
+
 # Optional: Get a free API token from https://ipinfo.io/signup
-IPINFO_API_TOKEN = None  # e.g., "your_token_here"
+# Set the IPINFO_API_TOKEN environment variable to use it
+IPINFO_API_TOKEN = os.environ.get('IPINFO_API_TOKEN', None)
 
 # Update interval in seconds
 UPDATE_INTERVAL = 60
