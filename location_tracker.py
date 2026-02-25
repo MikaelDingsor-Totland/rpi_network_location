@@ -118,8 +118,9 @@ class NetworkLocationTracker:
         return self.location_history[-limit:]
     
     def run_continuous(self, callback=None):
-        """Run continuous location tracking"""
-        
+        """
+        Run continuous location tracking
+
         Args:
             callback: Optional function to call with each location update
         """
