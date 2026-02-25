@@ -118,7 +118,8 @@ class NetworkLocationTracker:
         return self.location_history[-limit:]
     
     def run_continuous(self, callback=None):
-        """Run continuous location tracking"""
+        """
+        Run continuous location tracking.
         
         Args:
             callback: Optional function to call with each location update
@@ -182,7 +183,7 @@ class MultiSourceTracker(NetworkLocationTracker):
         }
     ]
     
-    def get_location_from_ip(self, ip=None):
+def get_location_from_ip(self, ip=None):
         """Try multiple APIs until one succeeds"""
         for api in self.APIS:
             try:
