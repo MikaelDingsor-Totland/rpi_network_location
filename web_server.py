@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
 Flask web server for live location dashboard
-Now with WiFi-based location for better accuracy!
+Uses IP-based geolocation
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
 from flask_cors import CORS
 import threading
-import os
 
-# Try WiFi tracker first, fall back to IP-based
-try:
-    from wifi_location_tracker import WiFiLocationTracker
-    tracker = WiFiLocationTracker(update_interval=60)
-    print("Using WiFi-based location (higher accuracy)")
-except ImportError:
-    from location_tracker import MultiSourceTracker
-    tracker = MultiSourceTracker(update_interval=60)
-    print("Using IP-based location (lower accuracy)")
+from location_tracker import MultiSourceTracker
+
+tracker = MultiSourceTracker(update_interval=60)
+print("Using IP-based location")
 
 app = Flask(__name__)
 CORS(app)
@@ -52,9 +46,7 @@ def get_status():
         'tracking_active': True,
         'update_interval': tracker.update_interval,
         'history_count': len(tracker.location_history),
-        'current_location': location,
-        'source': location.get('source', 'unknown') if location else 'none',
-        'accuracy': location.get('accuracy', 'unknown') if location else 'none'
+        'current_location': location
     })
 
 
