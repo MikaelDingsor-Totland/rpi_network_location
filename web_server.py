@@ -2,6 +2,7 @@
 """
 Flask web server for live location dashboard
 Uses IP-based geolocation
+Provides camera streaming control via RTSP
 """
 
 from flask import Flask, render_template, jsonify
@@ -9,9 +10,13 @@ from flask_cors import CORS
 import threading
 
 from location_tracker import MultiSourceTracker
+from camera_streamer import CameraStreamer, detect_camera, find_video_devices
+import config as app_config
 
 tracker = MultiSourceTracker(update_interval=60)
 print("Using IP-based location")
+
+streamer = CameraStreamer()
 
 app = Flask(__name__)
 CORS(app)
@@ -50,6 +55,37 @@ def get_status():
     })
 
 
+# ---- Camera streaming endpoints ----
+
+@app.route('/api/camera/status')
+def camera_status():
+    return jsonify(streamer.status())
+
+
+@app.route('/api/camera/detect')
+def camera_detect():
+    info = detect_camera()
+    if info:
+        return jsonify(info)
+    return jsonify({
+        'error': 'No camera detected',
+        'devices': find_video_devices(),
+    }), 404
+
+
+@app.route('/api/camera/start')
+def camera_start():
+    result = streamer.start()
+    code = 200 if result.get('streaming') else 500
+    return jsonify(result), code
+
+
+@app.route('/api/camera/stop')
+def camera_stop():
+    result = streamer.stop()
+    return jsonify(result)
+
+
 def background_tracker():
     tracker.run_continuous()
 
@@ -59,5 +95,16 @@ if __name__ == '__main__':
     tracker_thread.start()
     print("Getting initial location...")
     tracker.update_location()
+
+    # Auto-start camera stream for Frigate / go2rtc if configured
+    if getattr(app_config, 'CAMERA_AUTO_START', False):
+        rtsp_url = getattr(app_config, 'RTSP_URL', '(not configured)')
+        print(f"Auto-starting camera stream → {rtsp_url}")
+        result = streamer.start()
+        if result.get('streaming'):
+            print("Camera stream started successfully")
+        else:
+            print(f"Camera stream failed: {result.get('error', 'unknown')}")
+
     print("Starting web server on http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False)
