@@ -2,6 +2,7 @@
 """
 Flask web server for live location dashboard
 Uses IP-based geolocation
+Provides camera streaming control via RTSP
 """
 
 from flask import Flask, render_template, jsonify
@@ -9,9 +10,12 @@ from flask_cors import CORS
 import threading
 
 from location_tracker import MultiSourceTracker
+from camera_streamer import CameraStreamer, detect_camera, find_video_devices
 
 tracker = MultiSourceTracker(update_interval=60)
 print("Using IP-based location")
+
+streamer = CameraStreamer()
 
 app = Flask(__name__)
 CORS(app)
@@ -48,6 +52,37 @@ def get_status():
         'history_count': len(tracker.location_history),
         'current_location': location
     })
+
+
+# ---- Camera streaming endpoints ----
+
+@app.route('/api/camera/status')
+def camera_status():
+    return jsonify(streamer.status())
+
+
+@app.route('/api/camera/detect')
+def camera_detect():
+    info = detect_camera()
+    if info:
+        return jsonify(info)
+    return jsonify({
+        'error': 'No camera detected',
+        'devices': find_video_devices(),
+    }), 404
+
+
+@app.route('/api/camera/start')
+def camera_start():
+    result = streamer.start()
+    code = 200 if result.get('streaming') else 500
+    return jsonify(result), code
+
+
+@app.route('/api/camera/stop')
+def camera_stop():
+    result = streamer.stop()
+    return jsonify(result)
 
 
 def background_tracker():

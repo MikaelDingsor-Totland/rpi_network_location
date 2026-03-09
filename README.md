@@ -10,6 +10,7 @@ A network-based location system for Raspberry Pi 5 that determines your approxim
 - **REST API** - JSON endpoints for integration with other systems
 - **Location History** - Stores last 1000 location points
 - **Auto-Refresh** - Updates every 60 seconds
+- **Camera Streaming** - RTSP video streaming with automatic device detection and libcamera fallback
 
 ## Quick Start on Raspberry Pi 5
 
@@ -55,6 +56,10 @@ http://localhost:5000
 | `GET /api/location/update` | Force a location refresh |
 | `GET /api/history` | Get location history (last 100 points) |
 | `GET /api/status` | Get tracker status |
+| `GET /api/camera/status` | Get camera stream status |
+| `GET /api/camera/detect` | Detect available cameras |
+| `GET /api/camera/start` | Start RTSP camera stream |
+| `GET /api/camera/stop` | Stop RTSP camera stream |
 
 ## Example API Response
 
@@ -102,6 +107,60 @@ Enable and start:
 sudo systemctl enable location-tracker
 sudo systemctl start location-tracker
 ```
+
+## Camera Streaming (Optional)
+
+The project includes RTSP camera streaming support. It automatically detects available video devices and falls back to `libcamera` on modern Raspberry Pi OS when `/dev/video0` is not present.
+
+### Prerequisites
+
+```bash
+sudo apt install ffmpeg
+```
+
+For Raspberry Pi Camera Module on Bookworm or later:
+```bash
+sudo apt install rpicam-apps
+```
+
+### Configuration
+
+Edit `config.py` to set camera parameters:
+
+```python
+CAMERA_DEVICE = '/dev/video0'          # V4L2 video device path
+RTSP_URL = 'rtsp://192.168.1.100:8554/cam'  # RTSP server URL
+CAMERA_RESOLUTION = '1280x720'
+CAMERA_FRAMERATE = 15
+```
+
+### Detect cameras
+
+```bash
+python camera_streamer.py
+```
+
+Or use the API:
+```bash
+curl http://localhost:5000/api/camera/detect
+```
+
+### Start / stop streaming
+
+```bash
+curl http://localhost:5000/api/camera/start
+curl http://localhost:5000/api/camera/stop
+```
+
+### Troubleshooting: "Cannot open video device /dev/video0"
+
+If you see `No such file or directory` when accessing `/dev/video0`:
+
+1. **Check connected devices:** `ls /dev/video*`
+2. **Enable the camera** via `sudo raspi-config` → Interface Options → Camera
+3. **Load the V4L2 driver** (older Pi OS): `sudo modprobe bcm2835-v4l2`
+4. **Use libcamera** (Bookworm+): The streamer automatically falls back to `rpicam-vid`/`libcamera-vid` when no V4L2 device is found.
+5. **USB cameras:** Ensure the camera is plugged in and recognised (`lsusb`).
 
 ## Limitations
 
