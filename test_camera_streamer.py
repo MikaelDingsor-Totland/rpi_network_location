@@ -122,17 +122,30 @@ class TestBuildFfmpegCommand(unittest.TestCase):
             camera_streamer.build_ffmpeg_command(None)
 
 
+class TestValidateConfigValue(unittest.TestCase):
+    def test_safe_values_pass(self):
+        for val in ['libx264', 'ultrafast', 'tcp', '1280x720',
+                     'rtsp://192.168.100.101:30555/cam01', '15']:
+            camera_streamer._validate_config_value('test', val)
+
+    def test_unsafe_values_rejected(self):
+        for val in ['$(rm -rf /)', '; echo pwned', 'a b', 'foo|bar']:
+            with self.assertRaises(ValueError):
+                camera_streamer._validate_config_value('test', val)
+
+
 class TestCameraStreamer(unittest.TestCase):
     def test_initial_status(self):
-        s = camera_streamer.CameraStreamer()
+        s = camera_streamer.CameraStreamer(restart_delay=0)
         status = s.status()
         self.assertFalse(status['streaming'])
         self.assertIsNone(status['camera'])
         self.assertIsNone(status['error'])
+        self.assertEqual(status['restart_count'], 0)
 
     @patch('camera_streamer.detect_camera', return_value=None)
     def test_start_no_camera(self, mock_detect):
-        s = camera_streamer.CameraStreamer()
+        s = camera_streamer.CameraStreamer(restart_delay=0)
         result = s.start()
         self.assertFalse(result['streaming'])
         self.assertIn('error', result)
@@ -148,7 +161,7 @@ class TestCameraStreamer(unittest.TestCase):
         mock_proc.poll.return_value = None  # process is running
         mock_popen.return_value = mock_proc
 
-        s = camera_streamer.CameraStreamer()
+        s = camera_streamer.CameraStreamer(restart_delay=0)
         result = s.start()
         self.assertTrue(result['streaming'])
 
@@ -168,17 +181,58 @@ class TestCameraStreamer(unittest.TestCase):
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
-        s = camera_streamer.CameraStreamer()
+        s = camera_streamer.CameraStreamer(restart_delay=0)
         s.start()
         result = s.start()
         self.assertTrue(result['streaming'])
         self.assertEqual(result['message'], 'Already streaming')
 
     def test_stop_when_not_streaming(self):
-        s = camera_streamer.CameraStreamer()
+        s = camera_streamer.CameraStreamer(restart_delay=0)
         result = s.stop()
         self.assertFalse(result['streaming'])
         self.assertEqual(result['message'], 'Not streaming')
+
+    def test_restart_delay_from_constructor(self):
+        s = camera_streamer.CameraStreamer(restart_delay=10, max_restarts=3)
+        self.assertEqual(s.restart_delay, 10)
+        self.assertEqual(s.max_restarts, 3)
+
+    @patch('camera_streamer.subprocess.Popen')
+    @patch('camera_streamer.build_ffmpeg_command', return_value=['ffmpeg', '-i', '/dev/video0'])
+    @patch('camera_streamer.detect_camera', return_value={
+        'type': 'v4l2', 'device': '/dev/video0',
+        'devices': ['/dev/video0'], 'libcamera_available': False,
+    })
+    def test_status_includes_restart_count(self, mock_detect, mock_build, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        s = camera_streamer.CameraStreamer(restart_delay=0)
+        s.start()
+        status = s.status()
+        self.assertTrue(status['streaming'])
+        self.assertEqual(status['restart_count'], 0)
+
+    @patch('camera_streamer.subprocess.Popen')
+    @patch('camera_streamer.build_ffmpeg_command', return_value=['ffmpeg', '-i', '/dev/video0'])
+    @patch('camera_streamer.detect_camera', return_value={
+        'type': 'v4l2', 'device': '/dev/video0',
+        'devices': ['/dev/video0'], 'libcamera_available': False,
+    })
+    def test_start_returns_rtsp_url(self, mock_detect, mock_build, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        s = camera_streamer.CameraStreamer(
+            rtsp_url='rtsp://192.168.100.101:30555/cam01',
+            restart_delay=0,
+        )
+        result = s.start()
+        self.assertTrue(result['streaming'])
+        self.assertEqual(result['rtsp_url'], 'rtsp://192.168.100.101:30555/cam01')
 
 
 if __name__ == '__main__':

@@ -129,9 +129,11 @@ Edit `config.py` to set camera parameters:
 
 ```python
 CAMERA_DEVICE = '/dev/video0'          # V4L2 video device path
-RTSP_URL = 'rtsp://192.168.1.100:8554/cam'  # RTSP server URL
+RTSP_URL = 'rtsp://192.168.100.101:30555/cam01'  # go2rtc / Frigate RTSP URL
 CAMERA_RESOLUTION = '1280x720'
 CAMERA_FRAMERATE = 15
+CAMERA_AUTO_START = True               # start streaming on boot
+CAMERA_RESTART_DELAY = 5              # auto-restart after crash (0 = disable)
 ```
 
 ### Detect cameras
@@ -161,6 +163,78 @@ If you see `No such file or directory` when accessing `/dev/video0`:
 3. **Load the V4L2 driver** (older Pi OS): `sudo modprobe bcm2835-v4l2`
 4. **Use libcamera** (Bookworm+): The streamer automatically falls back to `rpicam-vid`/`libcamera-vid` when no V4L2 device is found.
 5. **USB cameras:** Ensure the camera is plugged in and recognised (`lsusb`).
+
+## Frigate NVR Integration
+
+Stream your RPi camera to [Frigate](https://frigate.video) for AI-powered object detection, recording and alerts.
+
+### How it works
+
+```
+RPi (camera_streamer.py)
+  └─ ffmpeg → RTSP push → go2rtc (:30555) → Frigate (detect + record)
+```
+
+The RPi pushes an H.264 RTSP stream to the **go2rtc** component that ships inside Frigate. Frigate then uses that stream for object detection and recording.
+
+### Step 1 — Configure the RPi
+
+Edit `config.py` so the stream points at your Frigate server:
+
+```python
+RTSP_URL = 'rtsp://192.168.100.101:30555/cam01'   # go2rtc RTSP listener
+CAMERA_AUTO_START = True                           # start on boot
+CAMERA_RESTART_DELAY = 5                           # auto-reconnect
+```
+
+### Step 2 — Configure Frigate
+
+Copy the included example and adapt it:
+
+```bash
+cp frigate.yml.example /path/to/your/frigate/config/frigate.yml
+```
+
+Key sections in `frigate.yml`:
+
+```yaml
+go2rtc:
+  streams:
+    cam01:
+      - rtsp://127.0.0.1:30555/cam01
+  rtsp:
+    listen: ":30555"          # must match RTSP_URL port in config.py
+
+cameras:
+  rpi_cam01:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:30555/cam01
+          roles: [detect, record]
+    detect:
+      width: 1280
+      height: 720
+      fps: 5
+```
+
+### Step 3 — Start everything
+
+On the RPi:
+
+```bash
+python web_server.py
+```
+
+The camera stream auto-starts and Frigate should show **"Rpi Cam01"** as online within a few seconds.
+
+### Troubleshooting Frigate "No frames have been received"
+
+| Symptom | Fix |
+|---------|-----|
+| *"Rpi cam01 is offline"* in Frigate UI | Make sure `camera_streamer.py` is running on the RPi and the RTSP_URL matches the go2rtc `listen` port. |
+| *"No frames have been received, check error logs"* | Verify the RPi can reach the Frigate server: `curl -v rtsp://192.168.100.101:30555/` from the RPi. Check firewall rules. |
+| Stream starts then drops | The auto-restart watchdog re-launches ffmpeg automatically. Check `CAMERA_RESTART_DELAY` in `config.py`. |
+| High latency | Use `CAMERA_ENCODER = 'libx264'`, `CAMERA_PRESET = 'ultrafast'`, and `RTSP_TRANSPORT = 'tcp'` (all defaults). |
 
 ## Limitations
 

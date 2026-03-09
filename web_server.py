@@ -11,6 +11,7 @@ import threading
 
 from location_tracker import MultiSourceTracker
 from camera_streamer import CameraStreamer, detect_camera, find_video_devices
+import config as app_config
 
 tracker = MultiSourceTracker(update_interval=60)
 print("Using IP-based location")
@@ -94,5 +95,16 @@ if __name__ == '__main__':
     tracker_thread.start()
     print("Getting initial location...")
     tracker.update_location()
+
+    # Auto-start camera stream for Frigate / go2rtc if configured
+    if getattr(app_config, 'CAMERA_AUTO_START', False):
+        print("Auto-starting camera stream → "
+              + getattr(app_config, 'RTSP_URL', '(not configured)'))
+        result = streamer.start()
+        if result.get('streaming'):
+            print("Camera stream started successfully")
+        else:
+            print(f"Camera stream failed: {result.get('error', 'unknown')}")
+
     print("Starting web server on http://0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False)

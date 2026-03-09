@@ -259,18 +259,40 @@ def build_ffmpeg_command(camera_info, rtsp_url=None):
 
 
 class CameraStreamer:
-    """Manage the lifecycle of an RTSP camera stream."""
+    """Manage the lifecycle of an RTSP camera stream.
 
-    def __init__(self, rtsp_url=None):
+    Supports automatic restart so that consumers like Frigate always
+    have a live feed.  When *restart_delay* > 0 the streamer spawns a
+    background watchdog thread that restarts ffmpeg whenever it exits
+    unexpectedly.
+    """
+
+    def __init__(self, rtsp_url=None, restart_delay=None, max_restarts=None):
         """
         Args:
             rtsp_url: Optional RTSP URL override.
+            restart_delay: Seconds to wait before restarting after a crash.
+                           ``None`` reads from config (default 5).
+                           ``0`` disables auto-restart.
+            max_restarts: Maximum consecutive restart attempts before giving
+                          up.  ``None`` reads from config (default 0 = unlimited).
         """
         self.rtsp_url = rtsp_url
+        self.restart_delay = (
+            restart_delay if restart_delay is not None
+            else getattr(config, 'CAMERA_RESTART_DELAY', 5)
+        )
+        self.max_restarts = (
+            max_restarts if max_restarts is not None
+            else getattr(config, 'CAMERA_MAX_RESTARTS', 0)
+        )
         self._process = None
         self._lock = threading.Lock()
+        self._watchdog_stop = threading.Event()
+        self._watchdog_thread = None
         self.camera_info = None
         self.error = None
+        self.restart_count = 0
 
     # -- public API -----------------------------------------------------------
 
@@ -282,6 +304,7 @@ class CameraStreamer:
                 'streaming': running,
                 'camera': self.camera_info,
                 'error': self.error,
+                'restart_count': self.restart_count,
             }
 
     def start(self):
@@ -295,6 +318,7 @@ class CameraStreamer:
                 return {'streaming': True, 'message': 'Already streaming'}
 
             self.error = None
+            self.restart_count = 0
             self.camera_info = detect_camera()
 
             if self.camera_info is None:
@@ -302,37 +326,36 @@ class CameraStreamer:
                 logger.error(self.error)
                 return {'streaming': False, 'error': self.error}
 
-            try:
-                cmd = build_ffmpeg_command(self.camera_info, self.rtsp_url)
-            except (FileNotFoundError, RuntimeError) as exc:
-                self.error = str(exc)
-                logger.error(self.error)
+            ok = self._launch_process()
+            if not ok:
                 return {'streaming': False, 'error': self.error}
 
-            logger.info("Starting stream: %s", ' '.join(cmd))
-            try:
-                self._process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+            # Start watchdog for auto-restart
+            if self.restart_delay > 0:
+                self._watchdog_stop.clear()
+                self._watchdog_thread = threading.Thread(
+                    target=self._watchdog, daemon=True,
                 )
-            except OSError as exc:
-                self.error = f"Failed to start streaming process: {exc}"
-                logger.error(self.error)
-                return {'streaming': False, 'error': self.error}
+                self._watchdog_thread.start()
 
             return {
                 'streaming': True,
                 'camera': self.camera_info,
-                'command': ' '.join(cmd),
+                'rtsp_url': self.rtsp_url or getattr(
+                    config, 'RTSP_URL', 'rtsp://localhost:8554/cam'
+                ),
             }
 
     def stop(self):
-        """Stop the active stream.
+        """Stop the active stream and disable auto-restart.
 
         Returns:
             dict: Status information.
         """
+        # Signal the watchdog to stop *before* acquiring the lock so the
+        # watchdog can finish its current sleep and exit.
+        self._watchdog_stop.set()
+
         with self._lock:
             if self._process is None or self._process.poll() is not None:
                 self._process = None
@@ -349,7 +372,78 @@ class CameraStreamer:
             logger.info("Stream stopped")
             return {'streaming': False, 'message': 'Stream stopped'}
 
-    # -- helpers --------------------------------------------------------------
+    # -- internal helpers -----------------------------------------------------
+
+    def _launch_process(self):
+        """Build the command and spawn ffmpeg.  Caller must hold *_lock*.
+
+        Returns:
+            bool: True on success.
+        """
+        try:
+            cmd = build_ffmpeg_command(self.camera_info, self.rtsp_url)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            self.error = str(exc)
+            logger.error(self.error)
+            return False
+
+        logger.info("Starting stream: %s", ' '.join(cmd))
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as exc:
+            self.error = f"Failed to start streaming process: {exc}"
+            logger.error(self.error)
+            return False
+
+        return True
+
+    def _watchdog(self):
+        """Background thread that restarts the stream when ffmpeg exits."""
+        while not self._watchdog_stop.is_set():
+            # Sleep in small increments so we can react to stop() quickly.
+            self._watchdog_stop.wait(timeout=2)
+            if self._watchdog_stop.is_set():
+                break
+
+            with self._lock:
+                if self._process is None:
+                    break
+                if self._process.poll() is None:
+                    # Still running — nothing to do.
+                    continue
+
+                # Process exited.
+                rc = self._process.returncode
+                logger.warning(
+                    "ffmpeg exited with code %s (restart #%d)",
+                    rc, self.restart_count + 1,
+                )
+
+                if (self.max_restarts > 0
+                        and self.restart_count >= self.max_restarts):
+                    self.error = (
+                        f"Stream crashed {self.restart_count} times; "
+                        "giving up. Check camera and network."
+                    )
+                    logger.error(self.error)
+                    self._process = None
+                    break
+
+            # Wait before restart (outside the lock).
+            if self._watchdog_stop.wait(timeout=self.restart_delay):
+                break
+
+            with self._lock:
+                self.restart_count += 1
+                logger.info("Restarting stream (attempt #%d)…",
+                            self.restart_count)
+                if not self._launch_process():
+                    logger.error("Restart failed: %s", self.error)
+                    break
 
     @staticmethod
     def _no_camera_message():

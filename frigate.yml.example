@@ -1,0 +1,90 @@
+# ============================================================================
+# Frigate NVR – example configuration for an RPi camera stream
+# ============================================================================
+#
+# This file shows how to configure Frigate (+ go2rtc) to receive the RTSP
+# stream that camera_streamer.py pushes from your Raspberry Pi.
+#
+# 1. Copy this file to your Frigate config directory and rename it to
+#    frigate.yml (or merge the relevant sections into your existing config).
+# 2. Update IP addresses, ports, and camera names to match your setup.
+# 3. Restart Frigate.
+#
+# Architecture:
+#
+#   RPi  ──ffmpeg──▸  go2rtc (RTSP listener :30555)  ──▸  Frigate
+#                          ▲                                 │
+#                    push stream                       object detection
+#                    from camera_streamer.py
+#
+# The RPi pushes an H.264 RTSP stream to go2rtc.  Frigate reads from go2rtc
+# for both detection and recording.
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# go2rtc – receives the RTSP push from the RPi
+# ---------------------------------------------------------------------------
+go2rtc:
+  streams:
+    # The RPi streams here via:
+    #   ffmpeg ... -f rtsp -rtsp_transport tcp rtsp://<frigate-ip>:30555/cam01
+    cam01:
+      - rtsp://127.0.0.1:30555/cam01
+
+  # go2rtc listen ports (make sure these match your Docker / host config)
+  rtsp:
+    listen: ":30555"
+  webrtc:
+    listen: ":30560"
+
+# ---------------------------------------------------------------------------
+# Frigate cameras
+# ---------------------------------------------------------------------------
+cameras:
+  rpi_cam01:
+    # Human-readable name shown in the Frigate UI
+    ui:
+      title: "Rpi Cam01"
+
+    ffmpeg:
+      inputs:
+        # go2rtc re-streams via its own RTSP endpoint
+        - path: rtsp://127.0.0.1:30555/cam01
+          roles:
+            - detect
+            - record
+
+    detect:
+      enabled: true
+      width: 1280
+      height: 720
+      fps: 5            # detection FPS (lower = less CPU)
+
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: motion     # keep only clips with motion
+
+    snapshots:
+      enabled: true
+      retain:
+        default: 7       # days
+
+    objects:
+      track:
+        - person
+        - car
+        - dog
+        - cat
+
+# ---------------------------------------------------------------------------
+# Global defaults (adjust to your hardware)
+# ---------------------------------------------------------------------------
+mqtt:
+  enabled: false          # set to true and configure if you use MQTT
+
+detectors:
+  cpu:                    # use CPU detector; switch to coral / openvino etc.
+    type: cpu
+    num_threads: 2
