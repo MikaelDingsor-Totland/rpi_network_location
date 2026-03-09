@@ -98,8 +98,8 @@ if __name__ == '__main__':
 
     # Auto-start camera stream for Frigate / go2rtc if configured
     if getattr(app_config, 'CAMERA_AUTO_START', False):
-        print("Auto-starting camera stream → "
-              + getattr(app_config, 'RTSP_URL', '(not configured)'))
+        rtsp_url = getattr(app_config, 'RTSP_URL', '(not configured)')
+        print(f"Auto-starting camera stream → {rtsp_url}")
         result = streamer.start()
         if result.get('streaming'):
             print("Camera stream started successfully")

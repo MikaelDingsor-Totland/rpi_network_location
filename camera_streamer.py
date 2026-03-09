@@ -453,7 +453,7 @@ class CameraStreamer:
             "2. Run 'ls /dev/video*' to list V4L2 devices.",
             "3. If using a Raspberry Pi Camera Module, ensure it is enabled:",
             "   - Run 'sudo raspi-config' -> Interface Options -> Camera -> Enable",
-            "   - Or add 'start_x=1' and 'gpu_mem=128' to /boot/config.txt",
+            "   - Or (legacy) add 'start_x=1' and 'gpu_mem=128' to /boot/config.txt",
             "     (on Bookworm+: /boot/firmware/config.txt)",
             "4. Load the V4L2 driver: 'sudo modprobe bcm2835-v4l2'",
             "5. On modern Raspberry Pi OS (Bookworm+), use libcamera tools:",

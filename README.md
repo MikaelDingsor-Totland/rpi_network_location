@@ -179,10 +179,10 @@ The RPi pushes an H.264 RTSP stream to the **go2rtc** component that ships insid
 
 ### Step 1 — Configure the RPi
 
-Edit `config.py` so the stream points at your Frigate server:
+Edit `config.py` so the stream points at your Frigate server (replace the IP with your Frigate host):
 
 ```python
-RTSP_URL = 'rtsp://192.168.100.101:30555/cam01'   # go2rtc RTSP listener
+RTSP_URL = 'rtsp://<frigate-ip>:30555/cam01'      # go2rtc RTSP listener
 CAMERA_AUTO_START = True                           # start on boot
 CAMERA_RESTART_DELAY = 5                           # auto-reconnect
 ```
