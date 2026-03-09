@@ -11,9 +11,13 @@ import subprocess
 import shutil
 import logging
 import threading
+import re
 import signal
 
 import config
+
+# Timeout (seconds) when terminating the streaming process
+_SHUTDOWN_TIMEOUT = 5
 
 logging.basicConfig(
     level=logging.INFO,
@@ -163,6 +167,18 @@ def detect_camera():
     return None
 
 
+def _validate_config_value(name, value):
+    """Validate that a config value contains only safe characters.
+
+    Raises:
+        ValueError: If the value contains shell-unsafe characters.
+    """
+    if not re.match(r'^[A-Za-z0-9_./:@\-]+$', value):
+        raise ValueError(
+            f"Config value '{name}' contains unsafe characters: {value!r}"
+        )
+
+
 def build_ffmpeg_command(camera_info, rtsp_url=None):
     """Build the ffmpeg command list for RTSP streaming.
 
@@ -176,6 +192,7 @@ def build_ffmpeg_command(camera_info, rtsp_url=None):
     Raises:
         FileNotFoundError: If ffmpeg is not installed.
         RuntimeError: If camera_info is None or has an unsupported type.
+        ValueError: If a config value contains unsafe characters.
     """
     if not shutil.which('ffmpeg'):
         raise FileNotFoundError(
@@ -192,6 +209,14 @@ def build_ffmpeg_command(camera_info, rtsp_url=None):
     encoder = getattr(config, 'CAMERA_ENCODER', 'libx264')
     preset = getattr(config, 'CAMERA_PRESET', 'ultrafast')
     transport = getattr(config, 'RTSP_TRANSPORT', 'tcp')
+
+    # Validate all values that will be interpolated into a shell command
+    for name, val in [('RTSP_URL', url), ('CAMERA_RESOLUTION', resolution),
+                      ('CAMERA_FRAMERATE', framerate),
+                      ('CAMERA_INPUT_FORMAT', input_format),
+                      ('CAMERA_ENCODER', encoder), ('CAMERA_PRESET', preset),
+                      ('RTSP_TRANSPORT', transport)]:
+        _validate_config_value(name, val)
 
     if camera_info['type'] == 'v4l2':
         cmd = [
@@ -210,7 +235,7 @@ def build_ffmpeg_command(camera_info, rtsp_url=None):
         ]
     elif camera_info['type'] == 'libcamera':
         width, height = resolution.split('x')
-        cmd = [
+        libcamera_cmd = [
             camera_info['device'],
             '--width', width,
             '--height', height,
@@ -223,7 +248,7 @@ def build_ffmpeg_command(camera_info, rtsp_url=None):
         # Pipe libcamera output into ffmpeg
         cmd = [
             'sh', '-c',
-            ' '.join(cmd) + ' | ffmpeg -f h264 -i - '
+            ' '.join(libcamera_cmd) + ' | ffmpeg -f h264 -i - '
             f'-c:v {encoder} -preset {preset} -tune zerolatency '
             f'-f rtsp -rtsp_transport {transport} {url}',
         ]
@@ -315,10 +340,10 @@ class CameraStreamer:
 
             self._process.terminate()
             try:
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=_SHUTDOWN_TIMEOUT)
             except subprocess.TimeoutExpired:
                 self._process.kill()
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=_SHUTDOWN_TIMEOUT)
 
             self._process = None
             logger.info("Stream stopped")
@@ -335,6 +360,7 @@ class CameraStreamer:
             "3. If using a Raspberry Pi Camera Module, ensure it is enabled:",
             "   - Run 'sudo raspi-config' -> Interface Options -> Camera -> Enable",
             "   - Or add 'start_x=1' and 'gpu_mem=128' to /boot/config.txt",
+            "     (on Bookworm+: /boot/firmware/config.txt)",
             "4. Load the V4L2 driver: 'sudo modprobe bcm2835-v4l2'",
             "5. On modern Raspberry Pi OS (Bookworm+), use libcamera tools:",
             "   - Install: 'sudo apt install rpicam-apps'",
